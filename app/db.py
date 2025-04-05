@@ -40,6 +40,7 @@ mock_db = {
 
 def simulate_rpc_call():
     time.sleep(random.uniform(0.1, 0.5))  # Simulate network delay
+    # temporary disable random failures for testing
     if random.random() < 0.1:  # 10% chance of failure
         raise ConnectionError("RPC call failed")
 
