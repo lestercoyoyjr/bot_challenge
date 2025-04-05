@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 import uvicorn
 import time
 from datetime import datetime
+import traceback
 
 from app.db import MockRPCDatabase
 
@@ -187,8 +188,10 @@ async def start_conversation(
                 first_question = surv["questions"][0]
                 message = format_bot_message(cust["name"], first_question)
                 db.add_message_to_conversation(conv_id, "BOT", message)
+                print(f"First message sent for conversation {conv_id}")
             except Exception as e:
                 print(f"Error sending first message: {e}")
+                traceback.print_exc()
 
         background_tasks.add_task(
             send_first_message, conversation_id, customer, survey)
@@ -205,6 +208,7 @@ async def start_conversation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred: {str(e)}"
         )
+
 # Get conversation state
 
 
@@ -282,33 +286,53 @@ async def send_message(
         def process_user_response(conv_id, response, conv):
             try:
                 # Get updated conversation state after user message
+                print(
+                    f"Processing response '{response}' for conversation {conv_id}")
                 conv = db.get_conversation_state(conv_id)
                 if not conv:
+                    print(f"Conversation {conv_id} not found")
                     return
 
                 # Get customer information
                 customer = db.get_customer_info(conv["customer_id"])
                 if not customer:
+                    print(f"Customer {conv['customer_id']} not found")
                     return
 
                 # Get survey information
                 survey = db.get_survey_by_id(conv["survey_id"])
                 if not survey:
+                    print(f"Survey {conv['survey_id']} not found")
                     return
 
                 # Save the user's answer
                 current_question_idx = conv.get("current_question_index", 0)
-                current_question = survey["questions"][current_question_idx]
+                print(f"Processing question at index {current_question_idx}")
+
+                try:
+                    current_question = survey["questions"][current_question_idx]
+                    print(f"Current question: {current_question['text']}")
+                except IndexError:
+                    print(
+                        f"Question index {current_question_idx} is out of bounds")
+                    return
 
                 # Store the user's response
                 conv["answers"][current_question["id"]] = response
+                print(
+                    f"Stored answer for question {current_question['id']}: {response}")
 
                 # Determine if we've reached the end of the survey
                 next_question_idx = current_question_idx + 1
+                print(f"Next question index would be: {next_question_idx}")
+                print(f"Total questions: {len(survey['questions'])}")
+
                 if next_question_idx >= len(survey["questions"]):
+                    print("Reached end of survey, marking as completed")
                     # Survey complete
                     conv["status"] = "completed"
                     db.save_conversation_state(conv_id, conv)
+                    print(f"Saved conversation state with status 'completed'")
 
                     # Save the survey response
                     survey_response = {
@@ -319,19 +343,25 @@ async def send_message(
                         "completed_at": datetime.now().isoformat()
                     }
                     db.save_survey_response(survey_response)
+                    print(f"Saved survey response: {survey_response}")
 
                     # Send completion message
                     completion_message = f"Thank you for your time, {customer['name']}! Your response has been recorded. Have a wonderful day!"
-                    db.add_message_to_conversation(
+                    result = db.add_message_to_conversation(
                         conv_id, "BOT", completion_message)
+                    print(
+                        f"Sent completion message: {completion_message}, result: {result}")
                     return
 
                 # Move to the next question
+                print(f"Moving to next question at index {next_question_idx}")
                 conv["current_question_index"] = next_question_idx
                 db.save_conversation_state(conv_id, conv)
+                print(f"Updated conversation state with new question index")
 
                 # If the previous question was about flavor choice and user provided a choice
                 if current_question["id"] == "q1" and response in ["1", "2", "3"]:
+                    print(f"Processing flavor choice: {response}")
                     # Get flavor name based on user's choice
                     flavor_choice = None
                     for option in current_question["options"]:
@@ -340,19 +370,35 @@ async def send_message(
                             break
 
                     if flavor_choice:
+                        print(f"Selected flavor: {flavor_choice}")
                         # Send acknowledgment message for the flavor choice
                         ack_message = f"Great choice! {flavor_choice} is a classic favorite. Would you like to provide feedback on why you selected this flavor?"
-                        db.add_message_to_conversation(
+                        result = db.add_message_to_conversation(
                             conv_id, "BOT", ack_message)
+                        print(
+                            f"Sent acknowledgment message for {flavor_choice}: {ack_message}, result: {result}")
                         return
+                    else:
+                        print(f"No flavor found for choice: {response}")
 
                 # For other questions or if flavor not found, send the next question
-                next_question = survey["questions"][next_question_idx]
-                next_message = format_bot_message(
-                    customer["name"], next_question)
-                db.add_message_to_conversation(conv_id, "BOT", next_message)
+                try:
+                    next_question = survey["questions"][next_question_idx]
+                    print(f"Next question: {next_question['text']}")
+                    next_message = format_bot_message(
+                        customer["name"], next_question)
+                    result = db.add_message_to_conversation(
+                        conv_id, "BOT", next_message)
+                    print(
+                        f"Sent next question: {next_message}, result: {result}")
+                except IndexError:
+                    print(f"No question found at index {next_question_idx}")
+            except ConnectionError as e:
+                print(f"RPC connection error: {e}")
+                traceback.print_exc()
             except Exception as e:
                 print(f"Error processing user response: {e}")
+                traceback.print_exc()
 
         # Process the user's response in the background
         background_tasks.add_task(
