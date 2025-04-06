@@ -686,12 +686,20 @@ class ConnectionManager:
 # Create connection manager instance
 manager = ConnectionManager()
 
+
 # WebSocket endpoint for real-time survey communication
-
-
 @app.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     try:
+        # Add this reconnection detection code here
+        reconnection_attempt = False
+        if websocket.scope.get('query_string'):
+            query_string = websocket.scope['query_string'].decode('utf-8')
+            if 'reconnect=true' in query_string:
+                reconnection_attempt = True
+                print(
+                    f"Reconnection attempt for conversation {conversation_id}")
+
         # Accept the connection
         await manager.connect(websocket, conversation_id)
 
@@ -774,6 +782,18 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             # Wait for message from client
             data = await websocket.receive_text()
             try:
+                # Reconnection confirmation handler here
+                try:
+                    message_data = json.loads(data)
+                    if message_data.get('type') == 'reconnect_confirm':
+                        await websocket.send_json({
+                            "type": "reconnect_success",
+                            "message": "Reconnection successful"
+                        })
+                        continue
+                except json.JSONDecodeError:
+                    pass
+
                 # Parse the message
                 message_data = json.loads(data)
                 content = message_data.get("content", "")
@@ -838,9 +858,8 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         except:
             pass  # Already disconnected or other error
 
+
 # Helper function to process WebSocket messages
-
-
 async def process_websocket_message(websocket: WebSocket, conversation_id: str, content: str, conv: Dict[str, Any]):
     try:
         # Get customer information
@@ -874,13 +893,13 @@ async def process_websocket_message(websocket: WebSocket, conversation_id: str, 
 
             # Thank the user for their feedback and complete the survey
             if customer and "name" in customer:
-                completion_message = f"Thank you for your feedback, {customer['name']}! Your detailed response has been recorded. Have a wonderful day!"
+                completion_message = f"Thank you for your feedback, {customer['name']}! Your detailed response has been recorded. Have a     wonderful day!"
             else:
-                completion_message = "Thank you for your feedback! Your detailed response has been recorded. Have a wonderful day!"
+                completion_message = "Thank you for your feedback! Your         detailed response has been recorded. Have a wonderful day!"
 
             # Add message to conversation history
             with_retry(db.add_message_to_conversation,
-                       conversation_id, "BOT", completion_message)
+                       conversation_id, "BOT",      completion_message)
 
             # Send completion message to client
             await websocket.send_json({
@@ -904,11 +923,20 @@ async def process_websocket_message(websocket: WebSocket, conversation_id: str, 
             }
             with_retry(db.save_survey_response, survey_response)
 
-            # Notify completion
+            # Notify completion and that connection will close
             await websocket.send_json({
                 "type": "completed",
-                "message": "Survey completed. Thank you for your participation!"
+                "message": "Survey completed. Thank you for your        participation!",
+                "close_connection": True,
+                "close_code": 1000,
+                "close_reason": "Survey completed successfully"
             })
+
+            # Wait a short time to ensure the client receives the messages
+            await asyncio.sleep(0.5)
+
+            # Close the connection gracefully
+            await websocket.close(code=1000, reason="Survey completed       successfully")
             return
 
         # Save the user's answer
@@ -979,13 +1007,13 @@ async def process_websocket_message(websocket: WebSocket, conversation_id: str, 
 
             # Send completion message
             if customer and "name" in customer:
-                completion_message = f"Thank you for your time, {customer['name']}! Your response has been recorded. Have a wonderful day!"
+                completion_message = f"Thank you for your time, {customer['name']}! Your response has been recorded. Have a wonderful    day!"
             else:
-                completion_message = "Thank you for your time! Your response has been recorded. Have a wonderful day!"
+                completion_message = "Thank you for your time! Your response        has been recorded. Have a wonderful day!"
 
             # Add message to conversation history
             with_retry(db.add_message_to_conversation,
-                       conversation_id, "BOT", completion_message)
+                       conversation_id, "BOT",      completion_message)
 
             # Send message to client
             await websocket.send_json({
@@ -995,11 +1023,20 @@ async def process_websocket_message(websocket: WebSocket, conversation_id: str, 
                 "timestamp": datetime.now().isoformat()
             })
 
-            # Notify completion
+            # Notify completion and that connection will close
             await websocket.send_json({
                 "type": "completed",
-                "message": "Survey completed. Thank you for your participation!"
+                "message": "Survey completed. Thank you for your        participation!",
+                "close_connection": True,
+                "close_code": 1000,
+                "close_reason": "Survey completed successfully"
             })
+
+            # Wait a short time to ensure the client receives the messages
+            await asyncio.sleep(0.5)
+
+            # Close the connection gracefully
+            await websocket.close(code=1000, reason="Survey completed       successfully")
             return
 
         # Move to the next question
