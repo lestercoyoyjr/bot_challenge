@@ -6,6 +6,10 @@ import uvicorn
 import time
 from datetime import datetime
 import traceback
+from fastapi import WebSocket, WebSocketDisconnect
+from typing import Dict, List, Any, Optional
+import json
+import asyncio
 
 from app.db import MockRPCDatabase
 
@@ -646,6 +650,431 @@ async def resume_survey(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred: {str(e)}"
         )
+
+
+class ConnectionManager:
+    def __init__(self):
+        # Store active connections by conversation_id
+        self.active_connections: Dict[str, List[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, conversation_id: str):
+        await websocket.accept()
+        if conversation_id not in self.active_connections:
+            self.active_connections[conversation_id] = []
+        self.active_connections[conversation_id].append(websocket)
+
+    def disconnect(self, websocket: WebSocket, conversation_id: str):
+        if conversation_id in self.active_connections:
+            if websocket in self.active_connections[conversation_id]:
+                self.active_connections[conversation_id].remove(websocket)
+            # Clean up empty lists
+            if not self.active_connections[conversation_id]:
+                del self.active_connections[conversation_id]
+
+    async def send_message(self, message: dict, conversation_id: str):
+        if conversation_id in self.active_connections:
+            for connection in self.active_connections[conversation_id]:
+                await connection.send_json(message)
+
+    async def broadcast(self, message: dict):
+        # Send to all connected clients across all conversations
+        for connections in self.active_connections.values():
+            for connection in connections:
+                await connection.send_json(message)
+
+
+# Create connection manager instance
+manager = ConnectionManager()
+
+# WebSocket endpoint for real-time survey communication
+
+
+@app.websocket("/ws/{conversation_id}")
+async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
+    try:
+        # Accept the connection
+        await manager.connect(websocket, conversation_id)
+
+        # Get conversation state
+        conversation = None
+        try:
+            conversation = with_retry(
+                db.get_conversation_state, conversation_id)
+            if not conversation:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Conversation with ID {conversation_id} not found"
+                })
+                await websocket.close()
+                return
+        except ConnectionError:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Database service is currently unavailable. Please try again later."
+            })
+            await websocket.close()
+            return
+
+        # Get customer and survey information
+        customer = None
+        survey = None
+
+        if conversation and "customer_id" in conversation:
+            customer = with_retry(db.get_customer_info,
+                                  conversation["customer_id"])
+            if not customer:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Customer with ID {conversation['customer_id']} not found"
+                })
+                await websocket.close()
+                return
+
+        if conversation and "survey_id" in conversation:
+            survey = with_retry(db.get_survey_by_id, conversation["survey_id"])
+            if not survey:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Survey with ID {conversation['survey_id']} not found"
+                })
+                await websocket.close()
+                return
+
+        # Send initial state to the client
+        await websocket.send_json({
+            "type": "state",
+            "conversation": conversation,
+            "customer": customer,
+            "survey": survey
+        })
+
+        # Send message history
+        messages = with_retry(db.get_conversation_messages, conversation_id)
+        await websocket.send_json({
+            "type": "history",
+            "messages": messages
+        })
+
+        # Notify if this is a resumed conversation
+        if conversation and conversation.get("current_question_index", 0) > 0:
+            current_question_idx = conversation["current_question_index"]
+            if survey and "questions" in survey and current_question_idx < len(survey["questions"]):
+                current_question = survey["questions"][current_question_idx]
+                if customer and "name" in customer:
+                    resume_message = format_bot_message(
+                        customer["name"], current_question)
+                    await websocket.send_json({
+                        "type": "resumed",
+                        "currentQuestion": current_question,
+                        "message": resume_message
+                    })
+
+        # Listen for messages from the client
+        while True:
+            # Wait for message from client
+            data = await websocket.receive_text()
+            try:
+                # Parse the message
+                message_data = json.loads(data)
+                content = message_data.get("content", "")
+
+                # Add user message to conversation
+                success = with_retry(
+                    db.add_message_to_conversation, conversation_id, "USER", content
+                )
+
+                if not success:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Failed to process message"
+                    })
+                    continue
+
+                # Get updated conversation before processing
+                conversation = with_retry(
+                    db.get_conversation_state, conversation_id)
+
+                # Process the message only if conversation is valid
+                if conversation:
+                    await process_websocket_message(websocket, conversation_id, content, conversation)
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Conversation state could not be retrieved"
+                    })
+                    continue
+
+                # Get updated conversation state after processing
+                conversation = with_retry(
+                    db.get_conversation_state, conversation_id)
+
+                # Check if survey is completed
+                if conversation and conversation.get("status") == "completed":
+                    await websocket.send_json({
+                        "type": "completed",
+                        "message": "Survey completed. Thank you for your participation!"
+                    })
+
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Invalid message format. Expected JSON."
+                })
+            except Exception as e:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"An error occurred: {str(e)}"
+                })
+
+    except WebSocketDisconnect:
+        # Handle disconnection
+        manager.disconnect(websocket, conversation_id)
+        print(f"Client disconnected from conversation {conversation_id}")
+    except Exception as e:
+        # Handle any other exceptions
+        print(f"WebSocket error: {str(e)}")
+        try:
+            manager.disconnect(websocket, conversation_id)
+        except:
+            pass  # Already disconnected or other error
+
+# Helper function to process WebSocket messages
+
+
+async def process_websocket_message(websocket: WebSocket, conversation_id: str, content: str, conv: Dict[str, Any]):
+    try:
+        # Get customer information
+        customer = None
+        survey = None
+
+        if "customer_id" in conv:
+            customer = with_retry(db.get_customer_info, conv["customer_id"])
+            if not customer:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Customer information not found"
+                })
+                return
+
+        if "survey_id" in conv:
+            survey = with_retry(db.get_survey_by_id, conv["survey_id"])
+            if not survey:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Survey information not found"
+                })
+                return
+
+        # Check if we're awaiting detailed feedback
+        if conv.get("awaiting_detailed_feedback", False):
+            # Store the detailed feedback
+            conv["answers"]["detailed_feedback"] = content
+            conv["awaiting_detailed_feedback"] = False
+            with_retry(db.save_conversation_state, conversation_id, conv)
+
+            # Thank the user for their feedback and complete the survey
+            if customer and "name" in customer:
+                completion_message = f"Thank you for your feedback, {customer['name']}! Your detailed response has been recorded. Have a wonderful day!"
+            else:
+                completion_message = "Thank you for your feedback! Your detailed response has been recorded. Have a wonderful day!"
+
+            # Add message to conversation history
+            with_retry(db.add_message_to_conversation,
+                       conversation_id, "BOT", completion_message)
+
+            # Send completion message to client
+            await websocket.send_json({
+                "type": "message",
+                "sender": "BOT",
+                "content": completion_message,
+                "timestamp": datetime.now().isoformat()
+            })
+
+            # Mark survey as completed
+            conv["status"] = "completed"
+            with_retry(db.save_conversation_state, conversation_id, conv)
+
+            # Save survey response
+            survey_response = {
+                "conversation_id": conversation_id,
+                "customer_id": conv["customer_id"],
+                "survey_id": conv["survey_id"],
+                "answers": conv["answers"],
+                "completed_at": datetime.now().isoformat()
+            }
+            with_retry(db.save_survey_response, survey_response)
+
+            # Notify completion
+            await websocket.send_json({
+                "type": "completed",
+                "message": "Survey completed. Thank you for your participation!"
+            })
+            return
+
+        # Save the user's answer
+        current_question_idx = conv.get("current_question_index", 0)
+
+        if not survey or "questions" not in survey or current_question_idx >= len(survey["questions"]):
+            await websocket.send_json({
+                "type": "error",
+                "message": "Invalid survey state"
+            })
+            return
+
+        current_question = survey["questions"][current_question_idx]
+
+        # Store the user's response
+        if "id" in current_question:
+            conv["answers"][current_question["id"]] = content
+        else:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Invalid question format"
+            })
+            return
+
+        # Handle feedback question specifically
+        if current_question.get("id") == "q2":
+            # Check if the response indicates user wants to provide feedback
+            positive_responses = ["yes", "yes please", "sure", "ok", "okay",
+                                  "of course", "certainly", "definitely", "absolutely", "yeah"]
+            if any(pos in content.lower() for pos in positive_responses):
+                # Ask for detailed feedback
+                feedback_message = "Great! Please share your thoughts about why you selected this flavor."
+
+                # Add message to conversation history
+                with_retry(db.add_message_to_conversation,
+                           conversation_id, "BOT", feedback_message)
+
+                # Send message to client
+                await websocket.send_json({
+                    "type": "message",
+                    "sender": "BOT",
+                    "content": feedback_message,
+                    "timestamp": datetime.now().isoformat()
+                })
+
+                # Set awaiting feedback state
+                conv["awaiting_detailed_feedback"] = True
+                with_retry(db.save_conversation_state, conversation_id, conv)
+                return
+
+        # Determine if we've reached the end of the survey
+        next_question_idx = current_question_idx + 1
+
+        if next_question_idx >= len(survey["questions"]):
+            # Survey complete
+            conv["status"] = "completed"
+            with_retry(db.save_conversation_state, conversation_id, conv)
+
+            # Save the survey response
+            survey_response = {
+                "conversation_id": conversation_id,
+                "customer_id": conv["customer_id"],
+                "survey_id": conv["survey_id"],
+                "answers": conv["answers"],
+                "completed_at": datetime.now().isoformat()
+            }
+            with_retry(db.save_survey_response, survey_response)
+
+            # Send completion message
+            if customer and "name" in customer:
+                completion_message = f"Thank you for your time, {customer['name']}! Your response has been recorded. Have a wonderful day!"
+            else:
+                completion_message = "Thank you for your time! Your response has been recorded. Have a wonderful day!"
+
+            # Add message to conversation history
+            with_retry(db.add_message_to_conversation,
+                       conversation_id, "BOT", completion_message)
+
+            # Send message to client
+            await websocket.send_json({
+                "type": "message",
+                "sender": "BOT",
+                "content": completion_message,
+                "timestamp": datetime.now().isoformat()
+            })
+
+            # Notify completion
+            await websocket.send_json({
+                "type": "completed",
+                "message": "Survey completed. Thank you for your participation!"
+            })
+            return
+
+        # Move to the next question
+        conv["current_question_index"] = next_question_idx
+        with_retry(db.save_conversation_state, conversation_id, conv)
+
+        # If the previous question was about flavor choice and user provided a choice
+        if current_question.get("id") == "q1" and content in ["1", "2", "3"]:
+            # Get flavor name based on user's choice
+            flavor_choice = None
+            for option in current_question.get("options", []):
+                if option.get("id") == content:
+                    flavor_choice = option.get("text")
+                    break
+
+            if flavor_choice:
+                # Send acknowledgment message for the flavor choice
+                ack_message = f"Great choice! {flavor_choice} is a classic favorite. Would you like to provide feedback on why you selected this flavor?"
+
+                # Add message to conversation history
+                with_retry(db.add_message_to_conversation,
+                           conversation_id, "BOT", ack_message)
+
+                # Send message to client
+                await websocket.send_json({
+                    "type": "message",
+                    "sender": "BOT",
+                    "content": ack_message,
+                    "timestamp": datetime.now().isoformat()
+                })
+                return
+
+        # For other questions or if flavor not found, send the next question
+        try:
+            next_question = survey["questions"][next_question_idx]
+            if customer and "name" in customer:
+                next_message = format_bot_message(
+                    customer["name"], next_question)
+            else:
+                next_message = format_bot_message("Customer", next_question)
+
+            # Add message to conversation history
+            with_retry(db.add_message_to_conversation,
+                       conversation_id, "BOT", next_message)
+
+            # Send message to client
+            await websocket.send_json({
+                "type": "message",
+                "sender": "BOT",
+                "content": next_message,
+                "timestamp": datetime.now().isoformat()
+            })
+        except IndexError:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"No question found at index {next_question_idx}"
+            })
+
+    except ConnectionError:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Database service is currently unavailable. Please try again later."
+        })
+    except Exception as e:
+        await websocket.send_json({
+            "type": "error",
+            "message": f"An error occurred: {str(e)}"
+        })
+
+
+@app.websocket("/ws-test")
+async def websocket_test(websocket: WebSocket):
+    await websocket.accept()
+    await websocket.send_text("Hello from WebSocket!")
+    await websocket.close()
 
 
 def main():

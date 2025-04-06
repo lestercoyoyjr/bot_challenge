@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Survey Chatbot WebSocket Test</title>
+    <style>
+      #messages {
+        height: 300px;
+        overflow-y: scroll;
+        border: 1px solid #ccc;
+        padding: 10px;
+        margin-bottom: 10px;
+      }
+      .bot {
+        color: blue;
+      }
+      .user {
+        color: green;
+      }
+      .error {
+        color: red;
+      }
+      .system {
+        color: gray;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Survey Chatbot WebSocket Test</h1>
+
+    <div>
+      <label for="conversation-id">Conversation ID:</label>
+      <input type="text" id="conversation-id" value="test-conversation-id" />
+      <button onclick="connect()">Connect</button>
+      <button onclick="disconnect()">Disconnect</button>
+    </div>
+
+    <div id="messages"></div>
+
+    <div>
+      <input type="text" id="message" placeholder="Type your message here" />
+      <button onclick="sendMessage()">Send</button>
+    </div>
+
+    <script>
+      let socket;
+
+      function addMessage(message, type) {
+        const messagesDiv = document.getElementById("messages");
+        const messageElement = document.createElement("div");
+        messageElement.className = type;
+        messageElement.textContent = message;
+        messagesDiv.appendChild(messageElement);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      }
+
+      function connect() {
+        const conversationId = document.getElementById("conversation-id").value;
+
+        if (!conversationId) {
+          addMessage("Please enter a conversation ID", "error");
+          return;
+        }
+
+        // Create WebSocket connection
+        socket = new WebSocket(`ws://localhost:8000/ws/${conversationId}`);
+
+        socket.onopen = function (e) {
+          addMessage("Connected to server", "system");
+        };
+
+        socket.onmessage = function (event) {
+          try {
+            const data = JSON.parse(event.data);
+
+            // Handle different message types
+            if (data.type === "error") {
+              addMessage(`Error: ${data.message}`, "error");
+            } else if (data.type === "state") {
+              addMessage("Received initial state", "system");
+              console.log("State:", data);
+            } else if (data.type === "history") {
+              addMessage("Received message history", "system");
+              if (data.messages && data.messages.length > 0) {
+                data.messages.forEach((msg) => {
+                  addMessage(
+                    `${msg.sender}: ${msg.content}`,
+                    msg.sender.toLowerCase()
+                  );
+                });
+              } else {
+                addMessage("No message history", "system");
+              }
+            } else if (data.type === "message") {
+              addMessage(
+                `${data.sender}: ${data.content}`,
+                data.sender.toLowerCase()
+              );
+            } else if (data.type === "resumed") {
+              addMessage(`Resumed conversation: ${data.message}`, "system");
+            } else if (data.type === "completed") {
+              addMessage(`Survey completed: ${data.message}`, "system");
+            } else {
+              addMessage(`Received: ${JSON.stringify(data)}`, "system");
+            }
+          } catch (e) {
+            addMessage(`Failed to parse message: ${event.data}`, "error");
+          }
+        };
+
+        socket.onclose = function (event) {
+          if (event.wasClean) {
+            addMessage(
+              `Connection closed cleanly, code=${event.code}`,
+              "system"
+            );
+          } else {
+            addMessage("Connection died", "error");
+          }
+        };
+
+        socket.onerror = function (error) {
+          addMessage(`Error: ${error.message}`, "error");
+        };
+      }
+
+      function disconnect() {
+        if (socket) {
+          socket.close();
+          addMessage("Disconnected from server", "system");
+        }
+      }
+
+      function sendMessage() {
+        const messageInput = document.getElementById("message");
+        const message = messageInput.value;
+
+        if (!message) {
+          addMessage("Please enter a message", "error");
+          return;
+        }
+
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          addMessage("Not connected to server", "error");
+          return;
+        }
+
+        // Send message
+        const messageObj = { content: message };
+        socket.send(JSON.stringify(messageObj));
+
+        // Add message to display
+        addMessage(`USER: ${message}`, "user");
+
+        // Clear input
+        messageInput.value = "";
+      }
+    </script>
+  </body>
+</html>
