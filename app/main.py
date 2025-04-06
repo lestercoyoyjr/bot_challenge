@@ -327,6 +327,45 @@ async def send_message(
                         print(f"Conversation {conv_id} not found")
                         return
 
+                    # Check if we're awaiting detailed feedback from a previous interaction
+                    if conv.get("awaiting_detailed_feedback", False):
+                        # Get customer information
+                        customer = with_retry(
+                            db.get_customer_info, conv["customer_id"])
+                        if not customer:
+                            print(f"Customer {conv['customer_id']} not found")
+                            return
+
+                        # Store the detailed feedback
+                        conv["answers"]["detailed_feedback"] = response
+                        conv["awaiting_detailed_feedback"] = False
+                        with_retry(db.save_conversation_state, conv_id, conv)
+                        print(f"Received detailed feedback: {response}")
+
+                        # Thank the user for their feedback and complete the survey
+                        completion_message = f"Thank you for your feedback, {customer['name']}! Your detailed response has been recorded. Have a wonderful day!"
+                        result = with_retry(
+                            db.add_message_to_conversation, conv_id, "BOT", completion_message)
+                        print(
+                            f"Sent completion message with feedback acknowledgment: {completion_message}, result: {result}")
+
+                        # Mark survey as completed
+                        conv["status"] = "completed"
+                        with_retry(db.save_conversation_state, conv_id, conv)
+
+                        # Save the survey response
+                        survey_response = {
+                            "conversation_id": conv_id,
+                            "customer_id": conv["customer_id"],
+                            "survey_id": conv["survey_id"],
+                            "answers": conv["answers"],
+                            "completed_at": datetime.now().isoformat()
+                        }
+                        with_retry(db.save_survey_response, survey_response)
+                        print(
+                            f"Saved survey response with detailed feedback: {survey_response}")
+                        return
+
                     # Get customer information
                     customer = with_retry(
                         db.get_customer_info, conv["customer_id"])
@@ -358,6 +397,33 @@ async def send_message(
                     conv["answers"][current_question["id"]] = response
                     print(
                         f"Stored answer for question {current_question['id']}: {response}")
+
+                    # Handle feedback question specifically
+                    if current_question["id"] == "q2":
+                        # Check if the response indicates user wants to provide feedback
+                        positive_responses = ["yes", "yes please", "sure", "ok", "okay",
+                                              "of course", "certainly", "definitely", "absolutely", "yeah"]
+                        if any(pos in response.lower() for pos in positive_responses):
+                            print(
+                                "User indicated they would like to provide feedback")
+
+                            # Ask for detailed feedback
+                            feedback_message = "Great! Please share your thoughts about why you selected this flavor."
+                            result = with_retry(
+                                db.add_message_to_conversation, conv_id, "BOT", feedback_message)
+                            print(
+                                f"Asked for detailed feedback: {feedback_message}, result: {result}")
+
+                            # Add another question to the survey dynamically (or handle as a sub-state)
+                            # For this example, we'll create a special state to indicate we're awaiting detailed feedback
+                            conv["awaiting_detailed_feedback"] = True
+                            with_retry(db.save_conversation_state,
+                                       conv_id, conv)
+                            return
+                        else:
+                            # User doesn't want to provide feedback, proceed to completion
+                            print(
+                                "User declined to provide feedback, completing survey")
 
                     # Determine if we've reached the end of the survey
                     next_question_idx = current_question_idx + 1
