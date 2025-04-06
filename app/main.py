@@ -529,6 +529,125 @@ async def send_message(
         )
 
 
+@app.get("/customers/{customer_id}/active-surveys")
+async def get_active_surveys(customer_id: str):
+    """Get all active/incomplete surveys for a customer."""
+    try:
+        # Check if customer exists
+        customer = db.get_customer_info(customer_id)
+        if not customer:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Customer with ID {customer_id} not found"
+            )
+
+        # Get all active surveys for the customer
+        active_surveys = db.get_customer_active_surveys(customer_id)
+
+        # Format the response
+        formatted_surveys = []
+        for survey in active_surveys:
+            # Get the survey details
+            survey_details = db.get_survey_by_id(survey["survey_id"])
+
+            # Calculate progress
+            total_questions = len(
+                survey_details["questions"]) if survey_details else 0
+            current_question = survey["current_question_index"]
+            progress = (current_question / total_questions) * \
+                100 if total_questions > 0 else 0
+
+            formatted_surveys.append({
+                "conversation_id": survey["id"],
+                "survey_id": survey["survey_id"],
+                "survey_name": survey_details["name"] if survey_details else "Unknown Survey",
+                "started_at": survey["created_at"],
+                "last_updated": survey["updated_at"],
+                "progress": progress,
+                "current_question_index": current_question,
+                "total_questions": total_questions
+            })
+
+        return formatted_surveys
+    except ConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service is currently unavailable. Please try again later."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
+        )
+
+
+@app.post("/conversations/{conversation_id}/resume")
+async def resume_survey(
+    conversation_id: str,
+    background_tasks: BackgroundTasks
+):
+    """Resume a previously started survey conversation."""
+    try:
+        # Resume the conversation
+        conversation = db.resume_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Active conversation with ID {conversation_id} not found"
+            )
+
+        # Get necessary information
+        customer_id = conversation["customer_id"]
+        survey_id = conversation["survey_id"]
+
+        # Get customer and survey information
+        customer = db.get_customer_info(customer_id)
+        survey = db.get_survey_by_id(survey_id)
+
+        if not customer or not survey:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Customer or survey information not found"
+            )
+
+        # Send a resume message in the background
+        def send_resume_message(conv_id, cust, surv, conv):
+            try:
+                current_question_idx = conv["current_question_index"]
+                current_question = surv["questions"][current_question_idx]
+
+                # Create a resume message
+                resume_message = f"Welcome back, {cust['name']}! Let's continue your survey.\n\n"
+                resume_message += format_bot_message(
+                    cust["name"], current_question)
+
+                # Add the message to the conversation
+                with_retry(db.add_message_to_conversation,
+                           conv_id, "BOT", resume_message)
+
+                print(f"Sent resume message for conversation {conv_id}")
+            except Exception as e:
+                print(f"Error sending resume message: {e}")
+                traceback.print_exc()
+
+        # Add the background task
+        background_tasks.add_task(
+            send_resume_message, conversation_id, customer, survey, conversation
+        )
+
+        return {"status": "resumed", "conversation_id": conversation_id}
+    except ConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service is currently unavailable. Please try again later."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
+        )
+
+
 def main():
     uvicorn.run(app, host="localhost", port=8000)
 
