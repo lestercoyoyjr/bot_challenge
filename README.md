@@ -1,177 +1,187 @@
-# Coding Challenge Specification: **Survey Response Chatbot Server**
+# Survey Chatbot System Documentation
 
-## Objective
+## Overview
 
-The purpose of this challenge is to assess your ability to design and implement a chatbot server that focuses on collecting survey responses from customers. Your implementation should demonstrate your problem-solving skills, technical strengths, and understanding of backend development principles. While the core task is to deliver a functional survey response chatbot, you are encouraged to add enhancements or optional features to showcase your engineering skills.
+The Survey Chatbot System is a FastAPI-based application designed to conduct automated surveys with users through a conversational interface. It offers both RESTful API endpoints and real-time WebSocket communication for interactive survey experiences.
 
----
+## System Architecture
 
-## Context
+### Components
 
-Your task is to build a chatbot server that facilitates **real-time survey collection** from customers. This challenge focuses exclusively on the **API/backend implementation**. **No frontend development is required**.
+1. **FastAPI Backend**
 
-You will be provided with a skeleton repository containing a FastAPI project setup and some mock API endpoints. Database access is abstracted via mocked RPC calls, implemented in [db.py](./app/db.py).  
-You must adjust [db.py](./app/db.py) as needed, but note that all database interactions must be handled through these mock RPC calls. This simulates accessing an external system and ensures that the solution remains generic.
+   - Manages survey logic and conversation state
+   - Provides RESTful API endpoints
+   - Handles WebSocket connections for real-time communication
 
-## Example of conversation between a user and the bot
+2. **Mock Database Layer**
 
+   - Simulates database operations with RPC-like interactions
+   - Handles storage of surveys, customer data, and conversation states
+   - Implements artificial network latency and failure scenarios for testing
+
+3. **WebSocket Client**
+   - Browser-based test client for interacting with the survey chatbot
+   - Supports session persistence and reconnection attempts
+
+### Data Models
+
+- **Conversations**: Tracks active survey sessions, including current question, answers, and status
+- **Customers**: Stores customer information
+- **Surveys**: Defines survey structure including questions and answer options
+- **Survey Responses**: Records completed survey submissions
+
+## API Reference
+
+### REST Endpoints
+
+| Endpoint                                    | Method | Description                             |
+| ------------------------------------------- | ------ | --------------------------------------- |
+| `/health`                                   | GET    | Health check endpoint                   |
+| `/surveys`                                  | GET    | Retrieve all available surveys          |
+| `/surveys/{survey_id}`                      | GET    | Get a specific survey by ID             |
+| `/conversations`                            | POST   | Start a new conversation/survey session |
+| `/conversations/{conversation_id}`          | GET    | Get the state of a conversation         |
+| `/conversations/{conversation_id}/messages` | GET    | Get all messages for a conversation     |
+| `/conversations/{conversation_id}/messages` | POST   | Send a message to a conversation        |
+| `/conversations/{conversation_id}/resume`   | POST   | Resume a previously started survey      |
+| `/customers/{customer_id}/active-surveys`   | GET    | List all active surveys for a customer  |
+
+### WebSocket Interface
+
+- **Endpoint**: `/ws/{conversation_id}`
+- **Purpose**: Real-time bidirectional communication for survey interactions
+- **Features**:
+  - Initial state synchronization
+  - Message history retrieval
+  - Automatic reconnection handling
+  - Survey completion notification
+
+## Error Handling
+
+The system implements:
+
+1. **RPC Error Handling**
+
+   - Retry logic with exponential backoff
+   - Maximum retry limits
+   - Graceful failure reporting
+
+2. **WebSocket Connection Management**
+   - Reconnection attempts for dropped connections
+   - Session state persistence
+   - Error notification to clients
+
+## Setup and Deployment
+
+### Requirements
+
+- Python 3.10 or higher
+- Dependencies managed through Poetry
+
+### Installation
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd survey-chatbot
+
+# Install dependencies using Poetry
+poetry install
+
+# Start the application
+poetry run python -m app.main
 ```
-2024-01-12 10:00:00 BOT: Hello John Doe!
-We are interested to know which flavour of ice cream you prefer. Here are your options:
-1 - Vanilla
-2 - Chocolate
-3 - Strawberry
 
-Please reply with the number corresponding to your choice.
+### Development Environment
 
-2024-01-12 10:00:10 USER: 2
+The project uses Poetry for dependency management:
 
-2024-01-12 10:00:15 BOT: Great choice! Chocolate is a classic favorite.
-Would you like to provide feedback on why you selected this flavor?
+- FastAPI for the web framework
+- Uvicorn as the ASGI server
+- Pytest for testing
 
-2024-01-12 10:00:30 USER: No, thank you.
+## Testing
 
-2024-01-12 10:00:35 BOT: Thank you for your time, John Doe!
-Your response has been recorded. Have a wonderful day!
-```
+The system can be tested through:
 
-Feel free to use modern AI tools like ChatGPT to quickly generate mock data or
-skeleton code.
+1. **Automated Tests**
 
----
+   - Unit tests for database operations
+   - Integration tests for API endpoints
+   - WebSocket connection tests
 
-## Requirements
+2. **Manual Testing Client**
+   - Browser-based WebSocket client in `test_websocket.html`
+   - Supports connection management and message sending
 
-### 1. **Core Functionality: Survey Response Chatbot**
+## Flow of Operation
 
-- Implement a chatbot server that:
-  - Guides customers through a survey, asking predefined questions.
-  - Collects and stores customer responses to survey questions via the mock RPC interface.
-  - Ensures survey progress and context are preserved across multiple interactions.
-  - Allows customers to resume partially completed surveys.
+### Survey Initiation
 
-### 2. **State Management**
+1. Client requests to start a survey via `/conversations` endpoint
+2. Server creates a conversation and sends the first question
+3. Client connects to the WebSocket endpoint to receive real-time updates
 
-- Design and implement a mechanism to manage survey states:
-  - Track which questions have been answered.
-  - Handle concurrent survey interactions with multiple customers.
-  - Support reconnects or session continuity in case of temporary disconnects.
+### Survey Progression
 
-### 3. **Real-Time Communication**
+1. Client sends responses through WebSocket or REST API
+2. Server processes the answer and updates the conversation state
+3. Server sends the next question or follow-up based on the survey flow
+4. Special handling for open-ended feedback questions
 
-- Support sending questions to customers and receiving responses in real time.
-- Handle connection lifecycle events, such as client disconnection and reconnection.
+### Survey Completion
 
-### 4. **Error Handling**
+1. Server marks the conversation as completed when all questions are answered
+2. Survey responses are saved to the database
+3. Client is notified of survey completion
+4. WebSocket connection is gracefully closed
 
-- Implement robust error handling to manage:
-  - RPC call failures (e.g., retries or fallback responses).
-  - Invalid inputs or unexpected scenarios during survey interactions.
-  - Unrecoverable errors with meaningful feedback to customers.
+## Implementation Details
 
-### 5. **Unit Tests**
+### Mock Database
 
-- Write automated unit tests to ensure:
-  - Core functionalities (e.g., question flow, response collection) are thoroughly tested.
-  - Key edge cases and error scenarios are covered.
+The system uses an in-memory mock database that simulates network latency and potential failures to test resilience:
 
-### 6. **Documentation**
+- Conversations are stored with their complete state
+- Network latency is simulated with random delays
+- Occasional failures are introduced to test error handling
+- All database access is performed via RPC-like calls
 
-- Provide comprehensive documentation that includes:
-  - How to set up, run, and test the chatbot server.
-  - A clear description of the survey flow and state management approach.
-  - Assumptions made during the implementation.
-  - Design choices and their rationale.
+### Background Tasks
 
----
+The system leverages FastAPI's background tasks for asynchronous operations:
 
-## Optional Enhancements
+- Sending initial survey questions
+- Processing user responses
+- Handling follow-up questions based on user input
 
-While the above requirements define the core functionality, adding optional features is highly encouraged to demonstrate creativity and engineering skills. Examples include:
+### WebSocket Connection Management
 
-1. **Survey Enhancements**
+The system implements a connection manager to handle multiple concurrent WebSocket connections:
 
-   - Dynamic surveys with questions loaded based on customer information (retrieved via RPC).
-   - Conditional branching based on previous answers.
+- Tracks active connections by conversation ID
+- Handles client disconnections gracefully
+- Supports broadcasting messages to specific conversations
+- Implements reconnection protocols for network interruptions
 
-2. **Feedback Collection**
+## Security Considerations
 
-   - Collect customer feedback about their experience with the chatbot.
+While this implementation is primarily for demonstration purposes, a production system would need:
 
-3. **Admin Controls**
+1. Authentication and authorization
+2. Rate limiting
+3. Input validation and sanitization
+4. HTTPS/WSS secure connections
+5. Data encryption at rest and in transit
 
-   - An interface for admins to view or manage collected survey responses (API-only).
-   - Ability to define or update surveys dynamically.
+## Future Enhancements
 
-4. **Advanced State Management**
+Potential improvements include:
 
-   - Implement mechanisms to store survey state in external storage (e.g., via RPC) for improved scalability.
-
-5. **WebSockets**
-
-   - Use websockets for client-server communication.
-
-6. **Other Creative Features**
-   - Multi-language support for surveys.
-   - Real-time analytics or visualization of survey results (API endpoints only).
-
----
-
-## Evaluation Criteria
-
-Your submission will be evaluated on the following:
-
-1. **Core Functionality**
-
-   - Does the chatbot reliably guide customers through the survey?
-   - Are survey responses accurately collected and stored?
-
-2. **Code Quality**
-
-   - Is the code modular, maintainable, and easy to understand?
-   - Are functions and modules appropriately named and concise?
-
-3. **Problem-Solving**
-
-   - Does the solution demonstrate clear and logical problem-solving?
-   - Are design decisions well thought out and justified?
-
-4. **State Management**
-
-   - Is the survey state handled effectively for multiple customers?
-
-5. **Error Handling**
-
-   - Are errors managed gracefully, with meaningful fallbacks?
-
-6. **Real-Time Functionality**
-
-   - Is WebSocket communication robust and reliable?
-
-7. **Documentation**
-
-   - Is the documentation clear, complete, and easy to follow?
-
-8. **Optional Features**
-
-   - Are optional features implemented in a way that adds meaningful value?
-
-9. **Preparedness for Live Discussion**
-   - Are you able to explain and defend your implementation choices?
-   - Can you confidently make modifications during a live coding session?
-
----
-
-## Submission Instructions
-
-1. Initialize the current directory (containing this README.md) as a Git repository.
-2. Implement your solution.
-3. Publish the repository in GitHub and provide us access, or, ZIP it and provide it to us via email attachment.
-
-# Basic implemantion working now (05/04/2025)
-
-- Real-time survey collection through a chatbot interface
-- Proper management of conversation states and survey progress
-- Natural multi-step conversation flow with appropriate responses
-- Robust error handling for simulated network failures
-- Comprehensive logging for debugging and troubleshooting
+1. Persistent database storage
+2. Analytics dashboard for survey results
+3. More complex survey logic with branching
+4. Multi-language support
+5. Integration with messaging platforms
+6. AI-powered response analysis
