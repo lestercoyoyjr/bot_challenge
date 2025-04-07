@@ -154,3 +154,37 @@ class MockRPCDatabase:
         # Update the conversation in the database
         mock_db["conversations"][conversation_id] = conversation
         return True
+
+    @staticmethod
+    def get_customer_active_surveys(customer_id: str) -> List[Dict[str, Any]]:
+        """Retrieve all active surveys for a specific customer."""
+        simulate_rpc_call()
+
+        active_surveys = []
+        for conversation_id, conversation in mock_db["conversations"].items():
+            if conversation["customer_id"] == customer_id and conversation["status"] == "active":
+                active_surveys.append(conversation)
+
+        return active_surveys
+
+    @staticmethod
+    def resume_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
+        """Resume a previously started conversation."""
+        simulate_rpc_call()
+
+        conversation = mock_db["conversations"].get(conversation_id)
+        if not conversation:
+            return None
+
+        # Check if the conversation is already completed
+        if conversation["status"] == "completed":
+            return None
+
+        # Update the conversation with a resumed status
+        conversation["resumed_at"] = datetime.now().isoformat()
+        conversation["updated_at"] = datetime.now().isoformat()
+
+        # Save the updated conversation
+        mock_db["conversations"][conversation_id] = conversation
+
+        return conversation
