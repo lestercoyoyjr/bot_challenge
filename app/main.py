@@ -72,9 +72,8 @@ class Survey(BaseModel):
     name: str
     questions: List[SurveyQuestion]
 
+
 # Exception handling for RPC failures
-
-
 def handle_rpc_error(func):
     def wrapper(*args, **kwargs):
         max_retries = 3
@@ -93,9 +92,8 @@ def handle_rpc_error(func):
                 time.sleep(0.5)  # Wait before retrying
     return wrapper
 
+
 # Helper function with retry logic for RPC calls
-
-
 def with_retry(func, *args, max_retries=3, **kwargs):
     """Execute a function with retry logic for RPC calls."""
     for attempt in range(max_retries):
@@ -112,9 +110,8 @@ def with_retry(func, *args, max_retries=3, **kwargs):
                 raise
     return None
 
+
 # Helper function to format bot messages
-
-
 def format_bot_message(customer_name: str, survey_question: dict) -> str:
     if not survey_question.get("options"):
         return f"Would you like to provide feedback on why you selected this option?"
@@ -123,16 +120,14 @@ def format_bot_message(customer_name: str, survey_question: dict) -> str:
         [f"{option['id']} - {option['text']}" for option in survey_question["options"]])
     return f"Hello {customer_name}! {survey_question['text']}\nHere are your options:\n{options_text}\n\nPlease reply with the number corresponding to your choice."
 
+
 # Health check endpoint
-
-
 @app.get("/health")
 async def health():
     return {"healthy": True}
 
+
 # Get all available surveys
-
-
 @app.get("/surveys")
 async def get_surveys():
     """Get all available surveys."""
@@ -172,9 +167,8 @@ async def get_survey(survey_id: str):
             detail=f"An unexpected error occurred: {str(e)}"
         )
 
+
 # Start a new conversation
-
-
 @app.post("/conversations", status_code=status.HTTP_201_CREATED)
 async def start_conversation(
     request: StartConversationRequest,
@@ -243,9 +237,8 @@ async def start_conversation(
             detail=f"An unexpected error occurred: {str(e)}"
         )
 
+
 # Get conversation state
-
-
 @app.get("/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str):
     """Get the state of a conversation."""
@@ -268,9 +261,8 @@ async def get_conversation(conversation_id: str):
             detail=f"An unexpected error occurred: {str(e)}"
         )
 
+
 # Get conversation messages
-
-
 @app.get("/conversations/{conversation_id}/messages")
 async def get_messages(conversation_id: str):
     """Get all messages for a conversation."""
@@ -288,9 +280,8 @@ async def get_messages(conversation_id: str):
             detail=f"An unexpected error occurred: {str(e)}"
         )
 
+
 # Send a message to a conversation
-
-
 @app.post("/conversations/{conversation_id}/messages", status_code=status.HTTP_201_CREATED)
 async def send_message(
     conversation_id: str,
