@@ -1,0 +1,77 @@
+body {
+    font-family: Arial, sans-serif;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+  #messages {
+    height: 400px;
+    overflow-y: scroll;
+    border: 1px solid #ccc;
+    padding: 10px;
+    margin-bottom: 10px;
+    background-color: #f9f9f9;
+  }
+  .bot {
+    color: #0066cc;
+    margin-bottom: 10px;
+  }
+  .user {
+    color: #009933;
+    margin-bottom: 10px;
+  }
+  .error {
+    color: #cc0000;
+    margin-bottom: 10px;
+  }
+  .system {
+    color: #666;
+    font-style: italic;
+    margin-bottom: 10px;
+  }
+  .message-container {
+    display: flex;
+    margin-top: 10px;
+  }
+  #message {
+    flex-grow: 1;
+    padding: 8px;
+    margin-right: 10px;
+  }
+  button {
+    padding: 8px 15px;
+    background-color: #4caf50;
+    color: white;
+    border: none;
+    cursor: pointer;
+  }
+  button:hover {
+    background-color: #45a049;
+  }
+  button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+  }
+  .control-container {
+    display: flex;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  #conversation-id {
+    flex-grow: 1;
+    padding: 8px;
+    margin-right: 10px;
+  }
+  .status {
+    margin-left: 10px;
+    padding: 5px 10px;
+    border-radius: 10px;
+  }
+  .status.connected {
+    background-color: #dff0d8;
+    color: #3c763d;
+  }
+  .status.disconnected {
+    background-color: #f2dede;
+    color: #a94442;
+  }

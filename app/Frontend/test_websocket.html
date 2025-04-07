@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Survey Chatbot WebSocket Test</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <h1>Survey Chatbot WebSocket Test</h1>
+
+    <div class="control-container">
+      <label for="conversation-id">Conversation ID:</label>
+      <input
+        type="text"
+        id="conversation-id"
+        placeholder="Enter conversation ID"
+      />
+      <button id="connect-btn" onclick="connect()">Connect</button>
+      <button id="disconnect-btn" onclick="disconnect()" disabled>
+        Disconnect
+      </button>
+      <div id="connection-status" class="status disconnected">Disconnected</div>
+    </div>
+
+    <div id="messages"></div>
+
+    <div class="message-container">
+      <input
+        type="text"
+        id="message"
+        placeholder="Type your message here"
+        disabled
+      />
+      <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
+    </div>
+
+    <script src="websocket.js"></script>
+  </body>
+</html>
